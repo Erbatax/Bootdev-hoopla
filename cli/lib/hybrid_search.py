@@ -1,23 +1,22 @@
 import os
-
-from .reranking import rerank
+from typing import Optional
 
 from .keyword_search import InvertedIndex
-from .semantic_search import ChunkedSemanticSearch
-from .search_utils import (
-    DEFAULT_HYBRID_SEARCH_LIMIT,
-    DEFAULT_HYBRID_SEARCH_ALPHA,
-    DEFAULT_RRF_K,
-    load_movies,
-    format_search_result,
-)
-from collections import defaultdict
-from typing import Optional
 from .query_enhancement import enhance_query
+from .reranking import rerank
+from .search_utils import (
+    DEFAULT_ALPHA,
+    DEFAULT_SEARCH_LIMIT,
+    RRF_K,
+    SEARCH_MULTIPLIER,
+    format_search_result,
+    load_movies,
+)
+from .semantic_search import ChunkedSemanticSearch
 
 
 class HybridSearch:
-    def __init__(self, documents):
+    def __init__(self, documents: list[dict]) -> None:
         self.documents = documents
         self.semantic_search = ChunkedSemanticSearch()
         self.semantic_search.load_or_create_chunk_embeddings(documents)
@@ -27,20 +26,20 @@ class HybridSearch:
             self.idx.build()
             self.idx.save()
 
-    def _bm25_search(self, query, limit) -> list[dict]:
+    def _bm25_search(self, query: str, limit: int = DEFAULT_SEARCH_LIMIT) -> list[dict]:
         self.idx.load()
         return self.idx.bm25_search(query, limit)
 
-    def weighted_search(self, query, alpha, limit=DEFAULT_HYBRID_SEARCH_LIMIT):
+    def weighted_search(self, query: str, alpha: float, limit: int = 5) -> list[dict]:
         bm25_results = self._bm25_search(query, limit * 500)
-        semantic_results = self.semantic_search.search_chunk(query, limit * 500)
+        semantic_results = self.semantic_search.search_chunks(query, limit * 500)
 
         combined = combine_search_results(bm25_results, semantic_results, alpha)
         return combined[:limit]
 
-    def rrf_search(self, query, k, limit=10):
+    def rrf_search(self, query: str, k: int, limit: int = 10) -> list[dict]:
         bm25_results = self._bm25_search(query, limit * 500)
-        semantic_results = self.semantic_search.search_chunk(query, limit * 500)
+        semantic_results = self.semantic_search.search_chunks(query, limit * 500)
 
         fused = reciprocal_rank_fusion(bm25_results, semantic_results, k)
         return fused[:limit]
@@ -53,7 +52,7 @@ def normalize_scores(scores: list[float]) -> list[float]:
     min_score = min(scores)
     max_score = max(scores)
 
-    if min_score == max_score:
+    if max_score == min_score:
         return [1.0] * len(scores)
 
     normalized_scores = []
@@ -74,14 +73,14 @@ def normalize_search_results(results: list[dict]) -> list[dict]:
     return results
 
 
-def hybrid_score(bm25_score, semantic_score, alpha=0.5):
+def hybrid_score(
+    bm25_score: float, semantic_score: float, alpha: float = DEFAULT_ALPHA
+) -> float:
     return alpha * bm25_score + (1 - alpha) * semantic_score
 
 
 def combine_search_results(
-    bm25_results: list[dict],
-    semantic_results: list[dict],
-    alpha: float = DEFAULT_HYBRID_SEARCH_ALPHA,
+    bm25_results: list[dict], semantic_results: list[dict], alpha: float = DEFAULT_ALPHA
 ) -> list[dict]:
     bm25_normalized = normalize_search_results(bm25_results)
     semantic_normalized = normalize_search_results(semantic_results)
@@ -128,23 +127,12 @@ def combine_search_results(
     return sorted(hybrid_results, key=lambda x: x["score"], reverse=True)
 
 
-def weighted_score_command(
-    query: str,
-    alpha: float = DEFAULT_HYBRID_SEARCH_ALPHA,
-    limit: int = DEFAULT_HYBRID_SEARCH_LIMIT,
-) -> list[dict]:
-    documents = load_movies()
-    hybrid_search = HybridSearch(documents)
-    results = hybrid_search.weighted_search(query, alpha, limit)
-    return results
-
-
-def rrf_score(rank, k=60):
+def rrf_score(rank: int, k: int = RRF_K) -> float:
     return 1 / (k + rank)
 
 
 def reciprocal_rank_fusion(
-    bm25_results: list[dict], semantic_results: list[dict], k: int = DEFAULT_RRF_K
+    bm25_results: list[dict], semantic_results: list[dict], k: int = RRF_K
 ) -> list[dict]:
     rrf_scores = {}
 
@@ -192,15 +180,34 @@ def reciprocal_rank_fusion(
     return sorted(rrf_results, key=lambda x: x["score"], reverse=True)
 
 
-def rrf_score_command(
+def weighted_search_command(
+    query: str, alpha: float = DEFAULT_ALPHA, limit: int = DEFAULT_SEARCH_LIMIT
+) -> dict:
+    movies = load_movies()
+    searcher = HybridSearch(movies)
+
+    original_query = query
+
+    search_limit = limit
+    results = searcher.weighted_search(query, alpha, search_limit)
+
+    return {
+        "original_query": original_query,
+        "query": query,
+        "alpha": alpha,
+        "results": results,
+    }
+
+
+def rrf_search_command(
     query: str,
-    k: int = DEFAULT_RRF_K,
+    k: int = RRF_K,
     enhance: Optional[str] = None,
     rerank_method: Optional[str] = None,
-    limit: int = DEFAULT_HYBRID_SEARCH_LIMIT,
-) -> list[dict]:
-    documents = load_movies()
-    searcher = HybridSearch(documents)
+    limit: int = DEFAULT_SEARCH_LIMIT,
+) -> dict:
+    movies = load_movies()
+    searcher = HybridSearch(movies)
 
     original_query = query
     enhanced_query = None
@@ -208,24 +215,21 @@ def rrf_score_command(
         enhanced_query = enhance_query(query, method=enhance)
         query = enhanced_query
 
-    search_limit = limit
-    if rerank_method:
-        search_limit = limit * 5
+    search_limit = limit * SEARCH_MULTIPLIER if rerank_method else limit
     results = searcher.rrf_search(query, k, search_limit)
 
     reranked = False
     if rerank_method:
+        results = rerank(query, results, method=rerank_method, limit=limit)
         reranked = True
-        rekanked_results = rerank(query, results, method=rerank_method, limit=limit)
-        results = rekanked_results
 
     return {
         "original_query": original_query,
         "enhanced_query": enhanced_query,
         "enhance_method": enhance,
-        "rerank_method": rerank_method,
-        "reranked": reranked,
         "query": query,
         "k": k,
+        "rerank_method": rerank_method,
+        "reranked": reranked,
         "results": results,
     }

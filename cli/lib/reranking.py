@@ -1,17 +1,23 @@
 import json
-import time
-from typing import Optional
+import os
+from time import sleep
 
+from dotenv import load_dotenv
+from google import genai
 from sentence_transformers import CrossEncoder
 
-from .search_utils import format_search_result
-from .llm import llm_client, DEFAULT_LLM_MODEL
+load_dotenv()
+api_key = os.getenv("GEMINI_API_KEY")
+client = genai.Client(api_key=api_key)
+model = "gemini-2.0-flash"
+cross_encoder = CrossEncoder("cross-encoder/ms-marco-TinyBERT-L2-v2")
 
 
-def individual_rerank(
-    query: str, documents: list[dict], limit: Optional[int] = None
+def llm_rerank_individual(
+    query: str, documents: list[dict], limit: int = 5
 ) -> list[dict]:
-    reranked_results = []
+    scored_docs = []
+
     for doc in documents:
         prompt = f"""Rate how well this movie matches the search query.
 
@@ -28,31 +34,30 @@ Give me ONLY the number in your response, no other text or explanation.
 
 Score:"""
 
-        response = llm_client.models.generate_content(
-            model=DEFAULT_LLM_MODEL, contents=prompt
-        )
-        reranked_score = float((response.text or "").strip().strip('"'))
-        reranked_results.append({**doc, "reranked_individual_score": reranked_score})
+        response = client.models.generate_content(model=model, contents=prompt)
+        score_text = (response.text or "").strip()
+        score = int(score_text)
+        scored_docs.append({**doc, "individual_score": score})
+        sleep(3)
 
-        time.sleep(3)  # To avoid rate limiting
-
-    sorted_results = sorted(
-        reranked_results, key=lambda x: x["reranked_individual_score"], reverse=True
-    )
-
-    if limit is None:
-        limit = len(sorted_results)
-    limited_results = sorted_results[:limit]
-
-    return limited_results
+    scored_docs.sort(key=lambda x: x["individual_score"], reverse=True)
+    return scored_docs[:limit]
 
 
-def batch_rerank(
-    query: str, documents: list[dict], limit: Optional[int] = None
-) -> list[dict]:
-    doc_list_str = ""
+def llm_rerank_batch(query: str, documents: list[dict], limit: int = 5) -> list[dict]:
+    if not documents:
+        return []
+
+    doc_map = {}
+    doc_list = []
     for doc in documents:
-        doc_list_str += f'- ID: {doc["id"]}, Title: {doc.get("title", "")}, Description: {doc.get("document", "")}\n'
+        doc_id = doc["id"]
+        doc_map[doc_id] = doc
+        doc_list.append(
+            f"{doc_id}: {doc.get('title', '')} - {doc.get('document', '')[:200]}"
+        )
+
+    doc_list_str = "\n".join(doc_list)
 
     prompt = f"""Rank these movies by relevance to the search query.
 
@@ -66,68 +71,43 @@ Return ONLY the IDs in order of relevance (best match first). Return a valid JSO
 [75, 12, 34, 2, 1]
 """
 
-    response = llm_client.models.generate_content(
-        model=DEFAULT_LLM_MODEL, contents=prompt
-    )
-    response_text = (
-        (response.text or "")
-        .strip()
-        .strip('"')
-        .removeprefix("```json")
-        .removesuffix("```")
-    )
-    new_ranks = json.loads(response_text)
+    response = client.models.generate_content(model=model, contents=prompt)
+    ranking_text = (response.text or "").strip()
 
-    sorted_results = []
-    id_to_doc = {doc["id"]: doc for doc in documents}
-    for i, doc_id in enumerate(new_ranks, 1):
-        if doc_id in id_to_doc:
-            sorted_results.append({**id_to_doc[doc_id], "reranked_batch_rank": i})
+    parsed_ids = json.loads(ranking_text)
 
-    if limit is None:
-        limit = len(sorted_results)
-    limited_results = sorted_results[:limit]
+    reranked = []
+    for i, doc_id in enumerate(parsed_ids):
+        if doc_id in doc_map:
+            reranked.append({**doc_map[doc_id], "batch_rank": i + 1})
 
-    return limited_results
+    return reranked[:limit]
 
 
 def cross_encoder_rerank(
-    query: str, documents: list[dict], limit: Optional[int] = None
+    query: str, documents: list[dict], limit: int = 5
 ) -> list[dict]:
     pairs = []
     for doc in documents:
         pairs.append([query, f"{doc.get('title', '')} - {doc.get('document', '')}"])
 
-    cross_encoder = CrossEncoder("cross-encoder/ms-marco-TinyBERT-L2-v2")
     scores = cross_encoder.predict(pairs)
 
-    zipped_docs: list[dict] = []
     for doc, score in zip(documents, scores):
-        zipped_docs.append({**doc, "reranked_cross_encoder_score": score})
+        doc["crossencoder_score"] = float(score)
 
-    sorted_results = sorted(
-        zipped_docs, key=lambda x: x["reranked_cross_encoder_score"], reverse=True
-    )
-
-    if limit is None:
-        limit = len(sorted_results)
-    limited_results = sorted_results[:limit]
-
-    return limited_results
+    documents.sort(key=lambda x: x["crossencoder_score"], reverse=True)
+    return documents[:limit]
 
 
 def rerank(
-    query: str,
-    documents: list[dict],
-    method: Optional[str] = None,
-    limit: Optional[int] = None,
+    query: str, documents: list[dict], method: str = "batch", limit: int = 5
 ) -> list[dict]:
-    match method:
-        case "individual":
-            return individual_rerank(query, documents, limit)
-        case "batch":
-            return batch_rerank(query, documents, limit)
-        case "cross_encoder":
-            return cross_encoder_rerank(query, documents, limit)
-        case _:
-            return documents
+    if method == "individual":
+        return llm_rerank_individual(query, documents, limit)
+    if method == "batch":
+        return llm_rerank_batch(query, documents, limit)
+    if method == "cross_encoder":
+        return cross_encoder_rerank(query, documents, limit)
+    else:
+        return documents[:limit]

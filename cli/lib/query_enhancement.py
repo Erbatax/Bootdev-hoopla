@@ -1,6 +1,13 @@
+import os
 from typing import Optional
 
-from .llm import llm_client, DEFAULT_LLM_MODEL
+from dotenv import load_dotenv
+from google import genai
+
+load_dotenv()
+api_key = os.getenv("gemini_api_key")
+client = genai.Client(api_key=api_key)
+model = "gemini-2.0-flash"
 
 
 def spell_correct(query: str) -> str:
@@ -13,9 +20,7 @@ Query: "{query}"
 If no errors, return the original query.
 Corrected:"""
 
-    response = llm_client.models.generate_content(
-        model=DEFAULT_LLM_MODEL, contents=prompt
-    )
+    response = client.models.generate_content(model=model, contents=prompt)
     corrected = (response.text or "").strip().strip('"')
     return corrected if corrected else query
 
@@ -40,9 +45,7 @@ Examples:
 
 Rewritten query:"""
 
-    response = llm_client.models.generate_content(
-        model=DEFAULT_LLM_MODEL, contents=prompt
-    )
+    response = client.models.generate_content(model=model, contents=prompt)
     rewritten = (response.text or "").strip().strip('"')
     return rewritten if rewritten else query
 
@@ -63,11 +66,10 @@ Examples:
 Query: "{query}"
 """
 
-    response = llm_client.models.generate_content(
-        model=DEFAULT_LLM_MODEL, contents=prompt
-    )
-    expansion = (response.text or "").strip().strip('"')
-    return expansion if expansion else query
+    response = client.models.generate_content(model=model, contents=prompt)
+    expanded_terms = (response.text or "").strip().strip('"')
+
+    return f"{query} {expanded_terms}"
 
 
 def enhance_query(query: str, method: Optional[str] = None) -> str:
