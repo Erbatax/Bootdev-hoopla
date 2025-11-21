@@ -6,6 +6,7 @@ from nltk.stem import PorterStemmer
 from .search_utils import (
     DEFAULT_SEARCH_LIMIT,
     CACHE_DIR,
+    format_search_result,
     load_movies,
     load_stop_words,
 )
@@ -162,10 +163,19 @@ class InvertedIndex:
             score_map[doc_id] = doc_score
         # Sort by score descending
         sorted_docs = sorted(score_map.items(), key=lambda x: x[1], reverse=True)
-        result_docs = []
+
+        results = []
         for doc_id, score in sorted_docs[:limit]:
-            result_docs.append((self.docmap[doc_id], score))
-        return result_docs
+            doc = self.docmap[doc_id]
+            formatted_result = format_search_result(
+                doc_id=doc["id"],
+                title=doc["title"],
+                document=doc["description"],
+                score=score,
+            )
+            results.append(formatted_result)
+
+        return results
 
     def __add_document(self, doc_id: int, text: str) -> None:
         tokens = tokenize_text(text)
