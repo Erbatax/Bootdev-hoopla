@@ -51,3 +51,21 @@ A search engine for movies
 
 3. Search is performed with the improved query
 4. Results are returned
+
+## The Rag Pipeline
+
+1. The user enters a query.
+2. The search system retrieves relevant documents.
+3. The LLM processes the query and retrieved documents.
+
+- Summarizes information
+- Answers questions
+
+4. The generated response is returned to the user.
+
+## Agentic system (slower but more intelligent)
+
+while not done: # Choose tool based on what we learned
+tool = pick_next_tool(previous_results) // Keyword search, semantic search, actor search, review search etc # Search with that tool
+results = tool.search(query) # Update our knowledge
+previous_results.append(results)

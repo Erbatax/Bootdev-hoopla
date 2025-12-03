@@ -14,7 +14,7 @@ cross_encoder = CrossEncoder("cross-encoder/ms-marco-TinyBERT-L2-v2")
 
 
 def llm_rerank_individual(
-    query: str, documents: list[dict], limit: int = 5
+    query: str, documents: list[dict], limit: int = 5, debug: bool = False
 ) -> list[dict]:
     scored_docs = []
 
@@ -41,10 +41,18 @@ Score:"""
         sleep(3)
 
     scored_docs.sort(key=lambda x: x["individual_score"], reverse=True)
+
+    if debug:
+        print(f"\nReranked Documents (Individual LLM Rerank) ({len(scored_docs)}):")
+        for i, doc in enumerate(scored_docs[: limit * 2], 1):
+            print(f" {i}. {doc['title']} (Score: {doc['individual_score']})")
+
     return scored_docs[:limit]
 
 
-def llm_rerank_batch(query: str, documents: list[dict], limit: int = 5) -> list[dict]:
+def llm_rerank_batch(
+    query: str, documents: list[dict], limit: int = 5, debug: bool = False
+) -> list[dict]:
     if not documents:
         return []
 
@@ -81,11 +89,16 @@ Return ONLY the IDs in order of relevance (best match first). Return a valid JSO
         if doc_id in doc_map:
             reranked.append({**doc_map[doc_id], "batch_rank": i + 1})
 
+    if debug:
+        print(f"\nReranked Documents (Batch LLM Rerank) ({len(reranked)}):")
+        for i, doc in enumerate(reranked[: limit * 2], 1):
+            print(f" {i}. {doc['title']} (Rank: {doc['batch_rank']})")
+
     return reranked[:limit]
 
 
 def cross_encoder_rerank(
-    query: str, documents: list[dict], limit: int = 5
+    query: str, documents: list[dict], limit: int = 5, debug: bool = False
 ) -> list[dict]:
     pairs = []
     for doc in documents:
@@ -97,17 +110,27 @@ def cross_encoder_rerank(
         doc["crossencoder_score"] = float(score)
 
     documents.sort(key=lambda x: x["crossencoder_score"], reverse=True)
+
+    if debug:
+        print(f"\nReranked Documents (Cross-Encoder Rerank) ({len(documents)}):")
+        for i, doc in enumerate(documents[: limit * 2], 1):
+            print(f" {i}. {doc['title']} (Score: {doc['crossencoder_score']})")
+
     return documents[:limit]
 
 
 def rerank(
-    query: str, documents: list[dict], method: str = "batch", limit: int = 5
+    query: str,
+    documents: list[dict],
+    method: str = "batch",
+    limit: int = 5,
+    debug: bool = False,
 ) -> list[dict]:
     if method == "individual":
-        return llm_rerank_individual(query, documents, limit)
+        return llm_rerank_individual(query, documents, limit=limit, debug=debug)
     if method == "batch":
-        return llm_rerank_batch(query, documents, limit)
+        return llm_rerank_batch(query, documents, limit=limit, debug=debug)
     if method == "cross_encoder":
-        return cross_encoder_rerank(query, documents, limit)
+        return cross_encoder_rerank(query, documents, limit=limit, debug=debug)
     else:
         return documents[:limit]

@@ -37,11 +37,25 @@ class HybridSearch:
         combined = combine_search_results(bm25_results, semantic_results, alpha)
         return combined[:limit]
 
-    def rrf_search(self, query: str, k: int, limit: int = 10) -> list[dict]:
+    def rrf_search(
+        self, query: str, k: int, limit: int = 10, debug: bool = False
+    ) -> list[dict]:
         bm25_results = self._bm25_search(query, limit * 500)
         semantic_results = self.semantic_search.search_chunks(query, limit * 500)
 
         fused = reciprocal_rank_fusion(bm25_results, semantic_results, k)
+
+        if debug:
+            print(f"\nBM25 Results ({len(bm25_results)}):")
+            for i, res in enumerate(bm25_results[: limit * 2], 1):
+                print(f" {i}. {res['title']} (Score: {res['score']:.4f})")
+            print(f"\nSemantic Results ({len(semantic_results)}):")
+            for i, res in enumerate(semantic_results[: limit * 2], 1):
+                print(f" {i}. {res['title']} (Score: {res['score']:.4f})")
+            print(f"\nRRF Fused Results ({len(fused)}):")
+            for i, res in enumerate(fused[: limit * 2], 1):
+                print(f" {i}. {res['title']} (Score: {res['score']:.4f})")
+
         return fused[:limit]
 
 
@@ -205,6 +219,7 @@ def rrf_search_command(
     enhance: Optional[str] = None,
     rerank_method: Optional[str] = None,
     limit: int = DEFAULT_SEARCH_LIMIT,
+    debug: bool = False,
 ) -> dict:
     movies = load_movies()
     searcher = HybridSearch(movies)
@@ -215,12 +230,17 @@ def rrf_search_command(
         enhanced_query = enhance_query(query, method=enhance)
         query = enhanced_query
 
+    if debug:
+        print(f"Original query: {original_query}")
+        if enhanced_query:
+            print(f"Enhanced query: {enhanced_query}")
+
     search_limit = limit * SEARCH_MULTIPLIER if rerank_method else limit
-    results = searcher.rrf_search(query, k, search_limit)
+    results = searcher.rrf_search(query, k=k, limit=search_limit, debug=debug)
 
     reranked = False
     if rerank_method:
-        results = rerank(query, results, method=rerank_method, limit=limit)
+        results = rerank(query, results, method=rerank_method, limit=limit, debug=debug)
         reranked = True
 
     return {
